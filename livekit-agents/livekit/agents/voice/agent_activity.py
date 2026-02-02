@@ -16,6 +16,7 @@ from livekit.agents.llm.realtime import MessageGeneration
 from livekit.agents.metrics.base import Metadata
 import asyncio
 import string
+import os
 
 from .. import llm, stt, tts, utils, vad
 from ..llm.tool_context import (
@@ -109,12 +110,10 @@ class _PreemptiveGeneration:
 # NOTE: AgentActivity isn't exposed to the public API
 class AgentActivity(RecognitionHooks):
     def __init__(self, agent: Agent, sess: AgentSession) -> None:
-        # Ignore words for intelligent interruption handling
-        self._ignore_words = {
-            'yeah', 'yes', 'yep', 'ok', 'okay', 'hmm', 'mhm', 'uh-huh', 'right', 'sure',
-            'cool', 'gotcha', 'wow', 'interesting', 'absolutely', 'exactly', 'perfect',
-            'yup', 'aha', 'aye', 'true', 'fine', 'correct'
-        }
+        # Get the string from the environment
+        raw_words = os.getenv("IGNORE_WORDS", "")
+        # Convert string to a set of lowercase words
+        self._ignore_words = {word.strip().lower() for word in raw_words.split(",") if word}
         self._agent_is_speaking = False
         self._agent, self._session = agent, sess
         self._rt_session: llm.RealtimeSession | None = None
@@ -1207,17 +1206,15 @@ class AgentActivity(RecognitionHooks):
         if isinstance(self.llm, llm.RealtimeModel) and self.llm.capabilities.turn_detection:
             return
 
-        # --- SMART GATEKEEPER ---
         # Logic: Only evaluate interruptions if the agent is currently speaking
         if self.stt and self._audio_recognition and self._session.agent_state == "speaking":
             transcript = self._audio_recognition.current_transcript
-            logger.debug(f"Interruption transcript: '{transcript}'")
             
             # 1. Ignore noise or VAD triggers that haven't produced text yet
             if not transcript.strip():
                 return 
 
-            # 2. Backchannel Filtering: Check if words are just acknowledgments (e.g., 'Okay', 'Cool')
+            # 2. Filler word Filtering: Check if words are just acknowledgments (e.g., 'Okay', 'Cool')
             ignore_list = getattr(opt, 'ignore_words', self._ignore_words)
             if self.is_filler_speech(transcript, ignore_list):
                 logger.info(f"Interruption blocked (filler speech): '{transcript}'")
